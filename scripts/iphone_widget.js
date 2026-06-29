@@ -135,6 +135,11 @@ async function buildWidget() {
 }
 
 const widget = await buildWidget();
+
+// Guarantee the tap URL is set on the FINAL presented widget object,
+// regardless of size or how it was built.
+widget.url = WEBAPP_URL;
+
 if (config.runsInWidget) {
   Script.setWidget(widget);
 } else {
