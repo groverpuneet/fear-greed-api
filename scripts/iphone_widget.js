@@ -126,6 +126,9 @@ async function buildWidget() {
   foot.textColor = new Color("#59606b");
   foot.centerAlignText();
 
+  // Tapping the widget opens the mobile-friendly gauge page at the root URL.
+  w.url = WEBAPP_URL;
+
   // Refresh roughly hourly to match the server cache.
   w.refreshAfterDate = new Date(Date.now() + 60 * 60 * 1000);
   return w;

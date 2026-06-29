@@ -269,8 +269,12 @@ async function load(){
   try{
     const r=await fetch('/api/fear-greed'); const d=await r.json();
     render('india', d.india); render('us', d.us);
+    const lu = (d.india&&d.india.last_updated) || (d.us&&d.us.last_updated);
+    let when = '';
+    if(lu){ const t=new Date(lu); if(!isNaN(t)) when='Last updated '+t.toLocaleString(); }
     document.getElementById('cache-info').textContent =
-      (d.cached?'Served from cache':'Freshly computed')+
+      (when?when+' · ':'')+
+      (d.cached?'served from cache':'freshly computed')+
       ' · refreshes in '+Math.round((d.cache_expires_in_seconds||0)/60)+' min';
   }catch(e){ document.getElementById('cache-info').textContent='Failed to load data'; }
 }
