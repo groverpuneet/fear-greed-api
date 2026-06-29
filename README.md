@@ -3,6 +3,11 @@
 A single, standalone **FastAPI** microservice that serves a clean JSON
 Fear & Greed Index for **India** and the **United States**.
 
+> **🟢 Live:** https://fear-greed-api-3x70.onrender.com
+> &nbsp;·&nbsp; [API](https://fear-greed-api-3x70.onrender.com/api/fear-greed)
+> &nbsp;·&nbsp; [Gauges](https://fear-greed-api-3x70.onrender.com/)
+> &nbsp;·&nbsp; [Health](https://fear-greed-api-3x70.onrender.com/health)
+
 - 🇮🇳 **India** — computed live from public **NSE** APIs + news sentiment (6 equal-weight components).
 - 🇺🇸 **US** — fetched from **CNN's** free public Fear & Greed API (CNN does the computation).
 - No database. No authentication. No personal data.
@@ -109,12 +114,19 @@ This repo ships a `render.yaml` (Infrastructure-as-Code) and a `Procfile`.
    - **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
    - **Plan:** Free
    - **Health check path:** `/health`
-3. Deploy. Render assigns a permanent URL like
-   `https://fear-greed-api.onrender.com`.
+3. Deploy. Render assigns a permanent URL — this service is live at
+   **`https://fear-greed-api-3x70.onrender.com`**.
 4. Verify:
    ```bash
-   curl https://fear-greed-api.onrender.com/api/fear-greed
+   curl https://fear-greed-api-3x70.onrender.com/api/fear-greed
    ```
+
+## iPhone widget
+
+A Scriptable home-screen widget for both gauges lives in
+[`scripts/iphone_widget.js`](scripts/iphone_widget.js) — its `WEBAPP_URL` is
+already pointed at the live Render deployment. Setup steps:
+[`scripts/IPHONE_WIDGET_SETUP.md`](scripts/IPHONE_WIDGET_SETUP.md).
 
 > Free-tier services sleep after inactivity; the first request after idle may
 > take ~30s to wake. The 1-hour cache keeps subsequent calls instant.
