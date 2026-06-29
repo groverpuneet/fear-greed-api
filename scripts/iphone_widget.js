@@ -39,6 +39,15 @@ function arrow(direction) {
   return "▬";
 }
 
+// Format an ISO timestamp as a local "29 Jun, 2:30 PM" string.
+function formatStamp(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  const df = new DateFormatter();
+  df.dateFormat = "d MMM, h:mm a";
+  return df.string(d);
+}
+
 // Render one market column (flag, score, label, direction) into a stack.
 function renderMarket(stack, flag, market) {
   const col = stack.addStack();
@@ -121,10 +130,20 @@ async function buildWidget() {
   }
 
   w.addSpacer(8);
-  const foot = w.addText(data.cached ? "cached" : "live");
+
+  // Full date + time of the last data refresh, e.g. "29 Jun, 2:30 PM".
+  const updated = (data.india && data.india.last_updated) ||
+                  (data.us && data.us.last_updated);
+  const foot = w.addText(updated ? `Updated ${formatStamp(updated)}` : "Updated —");
   foot.font = Font.systemFont(9);
-  foot.textColor = new Color("#59606b");
+  foot.textColor = new Color("#79828f");
   foot.centerAlignText();
+
+  // Tap hint — the whole widget opens the mobile details page.
+  const hint = w.addText("Tap for details");
+  hint.font = Font.systemFont(9);
+  hint.textColor = new Color("#59606b");
+  hint.centerAlignText();
 
   // Tapping the widget opens the mobile-friendly gauge page at the root URL.
   w.url = WEBAPP_URL;

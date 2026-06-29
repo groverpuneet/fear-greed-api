@@ -116,19 +116,23 @@ async def _safe_us() -> Optional[dict]:
         return None
 
 
-async def _get_result() -> dict:
-    """Return cached result if fresh, else rebuild. Returns the full response."""
+async def _get_result(force: bool = False) -> dict:
+    """Return cached result if fresh, else rebuild. Returns the full response.
+
+    When ``force`` is True the cache is bypassed: we always fetch fresh data and
+    overwrite the cache with it.
+    """
     now = time.time()
     age = now - _cache["stored_at"]
 
-    if _cache["payload"] is not None and age < CACHE_TTL_SECONDS:
+    if not force and _cache["payload"] is not None and age < CACHE_TTL_SECONDS:
         return _shape_response(_cache["payload"], cached=True, age=age)
 
     async with _cache_lock:
         # Re-check after acquiring the lock (another request may have refreshed).
         now = time.time()
         age = now - _cache["stored_at"]
-        if _cache["payload"] is not None and age < CACHE_TTL_SECONDS:
+        if not force and _cache["payload"] is not None and age < CACHE_TTL_SECONDS:
             return _shape_response(_cache["payload"], cached=True, age=age)
 
         logger.info("Cache miss — fetching fresh fear & greed data")
@@ -153,9 +157,9 @@ def _shape_response(payload: dict, cached: bool, age: float) -> dict:
 # --------------------------------------------------------------------------- #
 
 @app.get("/api/fear-greed")
-async def api_fear_greed() -> JSONResponse:
+async def api_fear_greed(refresh: bool = False) -> JSONResponse:
     try:
-        result = await _get_result()
+        result = await _get_result(force=refresh)
         return JSONResponse(result)
     except Exception:
         # Absolute last resort — still return best available data, never 500.
@@ -192,93 +196,198 @@ INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta http-equiv="refresh" content="300" />
+<meta name="theme-color" content="#0b0e14" />
 <title>Fear &amp; Greed Index</title>
 <style>
   :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
   body {
     margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: #0b0e14; color: #e6e6e6; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem;
+    padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom));
   }
-  h1 { font-weight: 600; letter-spacing: .5px; margin: .2rem 0 1.5rem; }
-  .cards { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  h1 { font-weight: 600; letter-spacing: .3px; font-size: 1.35rem; text-align: center; margin: .2rem 0 1rem; }
+  .controls { display: flex; align-items: center; justify-content: center; gap: .6rem; margin-bottom: 1.25rem; }
+  button#refresh {
+    background: #1c2533; color: #e6e6e6; border: 1px solid #2c3850; border-radius: 10px;
+    padding: .6rem 1.1rem; font-size: .95rem; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  button#refresh:active { background: #243047; }
+  button#refresh:disabled { opacity: .55; }
+  .spinner { width: 18px; height: 18px; border: 2px solid #2c3850; border-top-color: #9acd32; border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .card {
     background: #151a23; border: 1px solid #232a36; border-radius: 16px;
-    padding: 1.5rem 2rem; width: 300px; text-align: center;
+    padding: 1.25rem 1.25rem 1rem; margin-bottom: 1.25rem;
     box-shadow: 0 8px 30px rgba(0,0,0,.35);
   }
-  .card h2 { margin: 0 0 1rem; font-size: 1.1rem; color: #9aa4b2; font-weight: 500; }
-  .gauge { position: relative; width: 220px; height: 120px; margin: 0 auto; }
-  .score { font-size: 3rem; font-weight: 700; line-height: 1; }
-  .label { font-size: 1.15rem; margin-top: .4rem; font-weight: 600; }
-  .meta { color: #79828f; font-size: .82rem; margin-top: .8rem; }
+  .card h2 { margin: 0 0 .9rem; font-size: 1.05rem; color: #cbd3df; font-weight: 600; text-align: center; }
+  .top { display: flex; align-items: center; gap: 1rem; }
+  .score { font-size: 2.7rem; font-weight: 800; line-height: 1; min-width: 86px; text-align: center; }
+  .top-r { flex: 1; }
+  .label { font-size: 1.15rem; font-weight: 700; }
+  .dir { font-size: .85rem; color: #9aa4b2; margin-top: .15rem; }
   .arrow-up { color: #2ecc71; } .arrow-down { color: #e74c3c; } .arrow-flat { color: #95a5a6; }
-  table { width: 100%; margin-top: 1rem; border-collapse: collapse; font-size: .82rem; }
-  td { padding: .25rem .2rem; color: #b6c0cd; text-align: left; }
-  td.v { text-align: right; color: #e6e6e6; font-variant-numeric: tabular-nums; }
-  .footer { margin-top: 2rem; color: #59606b; font-size: .78rem; text-align:center; }
-  .bar { height: 6px; border-radius: 4px; background: linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71); position: relative; margin: .6rem 0; }
-  .bar i { position:absolute; top:-3px; width:12px; height:12px; border-radius:50%; background:#fff; transform:translateX(-50%); box-shadow:0 0 0 2px #151a23; }
+  .bar { height: 8px; border-radius: 5px; background: linear-gradient(90deg,#e74c3c,#e67e22,#f1c40f,#9acd32,#2ecc71); position: relative; margin: .9rem 0 .3rem; }
+  .bar i { position:absolute; top:-4px; width:16px; height:16px; border-radius:50%; background:#fff; transform:translateX(-50%); box-shadow:0 0 0 2px #151a23; }
+  .updated { color: #79828f; font-size: .78rem; margin-top: .6rem; }
+  details { margin-top: .9rem; border-top: 1px solid #232a36; padding-top: .4rem; }
+  summary { cursor: pointer; list-style: none; color: #9acd32; font-size: .9rem; font-weight: 600; padding: .35rem 0; -webkit-tap-highlight-color: transparent; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: " ▾"; color: #59606b; }
+  details[open] summary::after { content: " ▴"; }
+  .comp { margin: .7rem 0; }
+  .comp-top { display: flex; justify-content: space-between; font-size: .9rem; }
+  .comp-name { color: #d3dae5; font-weight: 600; }
+  .comp-val { color: #e6e6e6; font-variant-numeric: tabular-nums; }
+  .pbar { height: 6px; border-radius: 4px; background: #222a36; margin: .35rem 0; overflow: hidden; }
+  .pfill { height: 100%; border-radius: 4px; }
+  .comp-exp { font-size: .76rem; color: #8b95a3; }
+  .verdict { font-weight: 700; }
+  .stale { color: #e0a030; font-size: .7rem; }
+  .footer { color: #59606b; font-size: .76rem; text-align:center; margin-top: 1rem; line-height: 1.5; }
 </style>
 </head>
 <body>
+<div class="wrap">
   <h1>Fear &amp; Greed Index</h1>
-  <div class="cards">
-    <div class="card" id="india">
-      <h2>🇮🇳 India</h2>
-      <div class="bar"><i id="india-pin" style="left:50%"></i></div>
+  <div class="controls">
+    <button id="refresh" onclick="doRefresh()">⟳ Refresh Now</button>
+    <span id="spinner" class="spinner" style="display:none"></span>
+  </div>
+
+  <div class="card" id="india-card">
+    <h2>🇮🇳 India</h2>
+    <div class="top">
       <div class="score" id="india-score">–</div>
-      <div class="label" id="india-label">Loading…</div>
-      <div class="meta" id="india-meta"></div>
-      <table id="india-components"></table>
+      <div class="top-r">
+        <div class="label" id="india-label">Loading…</div>
+        <div class="dir" id="india-dir"></div>
+      </div>
     </div>
-    <div class="card" id="us">
-      <h2>🇺🇸 United States</h2>
-      <div class="bar"><i id="us-pin" style="left:50%"></i></div>
+    <div class="bar"><i id="india-pin" style="left:50%"></i></div>
+    <div class="updated" id="india-updated"></div>
+    <details id="india-details">
+      <summary>📊 Component breakdown</summary>
+      <div id="india-components"></div>
+    </details>
+  </div>
+
+  <div class="card" id="us-card">
+    <h2>🇺🇸 United States</h2>
+    <div class="top">
       <div class="score" id="us-score">–</div>
-      <div class="label" id="us-label">Loading…</div>
-      <div class="meta" id="us-meta"></div>
+      <div class="top-r">
+        <div class="label" id="us-label">Loading…</div>
+        <div class="dir" id="us-dir"></div>
+      </div>
     </div>
+    <div class="bar"><i id="us-pin" style="left:50%"></i></div>
+    <div class="updated" id="us-updated"></div>
+    <details id="us-details">
+      <summary>📊 Component breakdown (CNN)</summary>
+      <div id="us-components"></div>
+    </details>
   </div>
+
   <div class="footer">
-    Data: NSE (India) &amp; CNN (US). Cached up to 1 hour. Not investment advice.<br/>
-    <span id="cache-info"></span>
+    Data: NSE (India) &amp; CNN (US). Cached up to 1 hour; page auto-refreshes every 5 min.<br/>
+    Not investment advice. · <span id="cache-info"></span>
   </div>
+</div>
 <script>
-function color(s){ if(s<=25)return '#e74c3c'; if(s<=45)return '#e67e22'; if(s<=55)return '#f1c40f'; if(s<=75)return '#9acd32'; return '#2ecc71'; }
-function arrow(d){ if(d==='up')return '<span class="arrow-up">▲</span>'; if(d==='down')return '<span class="arrow-down">▼</span>'; return '<span class="arrow-flat">▬</span>'; }
-function render(id, data){
-  if(!data){ document.getElementById(id+'-label').textContent='Unavailable'; return; }
+function color(s){ if(s==null)return '#7f8c8d'; if(s<=25)return '#e74c3c'; if(s<=45)return '#e67e22'; if(s<=55)return '#f1c40f'; if(s<=75)return '#9acd32'; return '#2ecc71'; }
+function verdict(s){ if(s>=56)return 'Greed'; if(s>=46)return 'Neutral'; return 'Fear'; }
+function arrow(d){ if(d==='up')return '<span class="arrow-up">▲ up</span>'; if(d==='down')return '<span class="arrow-down">▼ down</span>'; return '<span class="arrow-flat">▬ flat</span>'; }
+function fmtIST(iso){
+  if(!iso) return '';
+  const d=new Date(iso); if(isNaN(d)) return '';
+  try{ return d.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true})+' IST'; }
+  catch(e){ return d.toLocaleString(); }
+}
+
+// India component display metadata: emoji, label, value formatter, explanation.
+const INDIA_META = {
+  vix:       {emoji:'📊', name:'VIX',       explain:'lower VIX = calmer market = greed',     fmt:v=>(+v).toFixed(2)},
+  pcr:       {emoji:'⚖️', name:'PCR',       explain:'ratio of puts to calls, ~1.0 = neutral', fmt:v=>(+v).toFixed(2)},
+  fii_flow:  {emoji:'🏦', name:'FII Flow',  explain:'foreign funds buying India = bullish',    fmt:v=>(v>=0?'+':'−')+'₹'+Math.abs(Math.round(v))+'Cr'},
+  breadth:   {emoji:'📈', name:'Breadth',   explain:'% of stocks advancing / above 50-day MA', fmt:v=>Math.round(v)+'%'},
+  momentum:  {emoji:'🚀', name:'Momentum',  explain:'Nifty 50 vs its 125-day average',         fmt:v=>(+v).toFixed(2)+'×'},
+  sentiment: {emoji:'📰', name:'Sentiment', explain:'average news sentiment today',            fmt:v=>(+v).toFixed(2)},
+};
+const INDIA_ORDER = ['vix','pcr','fii_flow','breadth','momentum','sentiment'];
+
+function compBar(emoji,name,valStr,score,ownLabel,explain,stale){
+  const v = verdict(score), c = color(score);
+  return '<div class="comp">'
+    + '<div class="comp-top"><span class="comp-name">'+emoji+' '+name+(stale?' <span class="stale">(stale)</span>':'')+'</span>'
+    + '<span class="comp-val">'+valStr+'</span></div>'
+    + '<div class="pbar"><div class="pfill" style="width:'+Math.max(2,Math.min(100,score))+'%;background:'+c+'"></div></div>'
+    + '<div class="comp-exp"><span class="verdict" style="color:'+c+'">'+v+'</span> · score '+score
+    + (ownLabel?' · '+ownLabel:'')+' — '+explain+'</div></div>';
+}
+
+function renderIndiaComponents(comps){
+  if(!comps) return '';
+  let html='';
+  for(const k of INDIA_ORDER){
+    const c=comps[k]; if(!c) continue;
+    const m=INDIA_META[k];
+    html += compBar(m.emoji, m.name, m.fmt(c.value), c.score, c.label, m.explain, c.stale);
+  }
+  return html;
+}
+
+function renderUsComponents(comps){
+  if(!comps || !comps.length) return '<div class="comp-exp">Sub-components unavailable.</div>';
+  return comps.map(c => compBar('📊', c.name, c.score, c.score, c.label, c.explain, false)).join('');
+}
+
+function render(id, data, kind){
+  const sc=document.getElementById(id+'-score');
+  if(!data){
+    sc.textContent='–'; sc.style.color='#7f8c8d';
+    document.getElementById(id+'-label').textContent='Unavailable';
+    document.getElementById(id+'-dir').textContent='';
+    document.getElementById(id+'-updated').textContent='';
+    document.getElementById(id+'-components').innerHTML='<div class="comp-exp">No data right now — try Refresh.</div>';
+    return;
+  }
   const s=data.score;
-  document.getElementById(id+'-score').textContent=s;
-  document.getElementById(id+'-score').style.color=color(s);
+  sc.textContent=s; sc.style.color=color(s);
   document.getElementById(id+'-label').textContent=data.label;
   document.getElementById(id+'-pin').style.left=Math.max(0,Math.min(100,s))+'%';
-  let meta = arrow(data.direction)+' from '+(data.previous_score==null?'–':data.previous_score)+' · '+(data.date||'');
-  document.getElementById(id+'-meta').innerHTML=meta;
-  if(data.components){
-    let html='';
-    for(const [k,c] of Object.entries(data.components)){
-      html += '<tr><td>'+k.replace('_',' ')+(c.stale?' *':'')+'</td><td class="v">'+c.value+'</td><td class="v" style="color:'+color(c.score)+'">'+c.score+'</td></tr>';
-    }
-    document.getElementById(id+'-components').innerHTML=html;
+  document.getElementById(id+'-dir').innerHTML=arrow(data.direction)+' from '+(data.previous_score==null?'–':data.previous_score)+' · '+(data.date||'');
+  document.getElementById(id+'-updated').textContent='Last updated: '+fmtIST(data.last_updated);
+  document.getElementById(id+'-components').innerHTML =
+    kind==='india' ? renderIndiaComponents(data.components) : renderUsComponents(data.components);
+}
+
+function paint(d){
+  render('india', d.india, 'india');
+  render('us', d.us, 'us');
+  document.getElementById('cache-info').textContent =
+    (d.cached?'served from cache':'freshly computed')+
+    ' · next auto-refresh in '+Math.round((d.cache_expires_in_seconds||0)/60)+' min';
+}
+
+async function load(force){
+  const btn=document.getElementById('refresh'), sp=document.getElementById('spinner');
+  if(force){ btn.disabled=true; sp.style.display='inline-block'; }
+  try{
+    const r=await fetch('/api/fear-greed'+(force?'?refresh=true':''), {cache:'no-store'});
+    paint(await r.json());
+  }catch(e){
+    document.getElementById('cache-info').textContent='Failed to load data — try again';
+  }finally{
+    if(force){ btn.disabled=false; sp.style.display='none'; }
   }
 }
-async function load(){
-  try{
-    const r=await fetch('/api/fear-greed'); const d=await r.json();
-    render('india', d.india); render('us', d.us);
-    const lu = (d.india&&d.india.last_updated) || (d.us&&d.us.last_updated);
-    let when = '';
-    if(lu){ const t=new Date(lu); if(!isNaN(t)) when='Last updated '+t.toLocaleString(); }
-    document.getElementById('cache-info').textContent =
-      (when?when+' · ':'')+
-      (d.cached?'served from cache':'freshly computed')+
-      ' · refreshes in '+Math.round((d.cache_expires_in_seconds||0)/60)+' min';
-  }catch(e){ document.getElementById('cache-info').textContent='Failed to load data'; }
-}
-load(); setInterval(load, 5*60*1000);
+function doRefresh(){ load(true); }
+load(false);
 </script>
 </body>
 </html>"""

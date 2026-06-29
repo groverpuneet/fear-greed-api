@@ -29,6 +29,42 @@ CNN_HEADERS = {
 }
 
 
+# CNN's 7 sub-indicators, in display order, mapped to friendly names + a
+# one-line plain-English explanation for the mobile page.
+CNN_COMPONENTS = [
+    ("market_momentum_sp500", "Market Momentum", "S&P 500 vs its 125-day average"),
+    ("stock_price_strength", "Stock Price Strength", "52-week highs vs lows on the NYSE"),
+    ("stock_price_breadth", "Stock Price Breadth", "advancing vs declining volume"),
+    ("put_call_options", "Put/Call Ratio", "puts vs calls — hedging demand"),
+    ("market_volatility_vix", "Market Volatility", "the VIX level (lower = calmer)"),
+    ("safe_haven_demand", "Safe Haven Demand", "stocks vs bonds returns"),
+    ("junk_bond_demand", "Junk Bond Demand", "risk appetite in credit markets"),
+]
+
+
+def _extract_components(data: dict) -> list:
+    """Pull CNN's 7 sub-indicators into a uniform list for the API/page."""
+    components = []
+    for key, name, explain in CNN_COMPONENTS:
+        block = data.get(key)
+        if not isinstance(block, dict):
+            continue
+        try:
+            score = round(float(block.get("score")))
+        except (TypeError, ValueError):
+            continue
+        rating = block.get("rating")
+        label = rating.title() if isinstance(rating, str) else _label_from_score(score)
+        components.append({
+            "key": key,
+            "name": name,
+            "score": score,
+            "label": label,
+            "explain": explain,
+        })
+    return components
+
+
 def _label_from_score(score: float) -> str:
     """Map CNN's 0-100 score onto a human label matching CNN's own buckets."""
     if score < 25:
@@ -116,4 +152,5 @@ async def fetch_us_fear_greed(client: httpx.AsyncClient) -> Optional[dict]:
         "previous_score": previous_score,
         "date": date,
         "last_updated": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "components": _extract_components(data),
     }
