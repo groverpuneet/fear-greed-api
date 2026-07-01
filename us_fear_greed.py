@@ -65,6 +65,37 @@ def _extract_components(data: dict) -> list:
     return components
 
 
+def _extract_history(data: dict, days: int = 30) -> list:
+    """Last ``days`` of CNN's daily Fear & Greed scores as [{date, score}].
+
+    CNN exposes ``fear_and_greed_historical.data`` as ``[{x: epoch_ms, y: score}]``.
+    """
+    hist = data.get("fear_and_greed_historical")
+    points = hist.get("data") if isinstance(hist, dict) else None
+    if not isinstance(points, list) or not points:
+        return []
+
+    try:
+        latest_x = float(points[-1]["x"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return []
+    cutoff = latest_x - days * 86400_000.0
+
+    out = []
+    for p in points:
+        try:
+            x = float(p["x"])
+            y = float(p["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if x < cutoff:
+            continue
+        date = _date_from_timestamp(x)
+        if date:
+            out.append({"date": date, "score": round(y)})
+    return out
+
+
 def _label_from_score(score: float) -> str:
     """Map CNN's 0-100 score onto a human label matching CNN's own buckets."""
     if score < 25:
@@ -153,4 +184,5 @@ async def fetch_us_fear_greed(client: httpx.AsyncClient) -> Optional[dict]:
         "date": date,
         "last_updated": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "components": _extract_components(data),
+        "history": _extract_history(data),
     }

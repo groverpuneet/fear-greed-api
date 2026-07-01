@@ -87,7 +87,30 @@ async def _build_payload() -> dict:
         elif us["score"] < prev_us:
             us["direction"] = "down"
 
+    # India has no public historical Fear & Greed source and we keep no database,
+    # so we accumulate a rolling 30-day history in memory (one point per day).
+    # This builds up over time and resets if the instance restarts.
+    if india is not None and india.get("score") is not None:
+        _record_india_history(india.get("date"), india["score"])
+        india["history"] = list(_india_history)
+
     return {"india": india, "us": us}
+
+
+# Rolling in-memory daily history for India: [{date, score}], newest last.
+_india_history: list = []
+_INDIA_HISTORY_DAYS = 30
+
+
+def _record_india_history(date: Optional[str], score: int) -> None:
+    """Append today's India score, one entry per calendar date, capped at 30."""
+    if not date:
+        return
+    if _india_history and _india_history[-1].get("date") == date:
+        _india_history[-1]["score"] = score  # same day → keep latest value
+    else:
+        _india_history.append({"date": date, "score": score})
+    del _india_history[:-_INDIA_HISTORY_DAYS]
 
 
 async def _safe_india(prev_score: Optional[int]) -> dict:
@@ -234,6 +257,11 @@ INDEX_HTML = """<!DOCTYPE html>
   .bar { height: 8px; border-radius: 5px; background: linear-gradient(90deg,#e74c3c,#e67e22,#f1c40f,#9acd32,#2ecc71); position: relative; margin: .9rem 0 .3rem; }
   .bar i { position:absolute; top:-4px; width:16px; height:16px; border-radius:50%; background:#fff; transform:translateX(-50%); box-shadow:0 0 0 2px #151a23; }
   .updated { color: #79828f; font-size: .78rem; margin-top: .6rem; }
+  .spark { margin-top: .8rem; }
+  .spark svg { display: block; width: 100%; height: 64px; }
+  .spark-row { display: flex; justify-content: space-between; font-size: .72rem; color: #9aa4b2; }
+  .spark-x { display: flex; justify-content: space-between; font-size: .68rem; color: #59606b; margin-top: .15rem; }
+  .spark-empty { font-size: .74rem; color: #59606b; padding: .4rem 0; text-align: center; }
   details { margin-top: .9rem; border-top: 1px solid #232a36; padding-top: .4rem; }
   summary { cursor: pointer; list-style: none; color: #9acd32; font-size: .9rem; font-weight: 600; padding: .35rem 0; -webkit-tap-highlight-color: transparent; }
   summary::-webkit-details-marker { display: none; }
@@ -270,6 +298,7 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
     <div class="bar"><i id="india-pin" style="left:50%"></i></div>
     <div class="updated" id="india-updated"></div>
+    <div class="spark" id="india-spark"></div>
     <details id="india-details">
       <summary>📊 Component breakdown</summary>
       <div id="india-components"></div>
@@ -287,6 +316,7 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
     <div class="bar"><i id="us-pin" style="left:50%"></i></div>
     <div class="updated" id="us-updated"></div>
+    <div class="spark" id="us-spark"></div>
     <details id="us-details">
       <summary>📊 Component breakdown (CNN)</summary>
       <div id="us-components"></div>
@@ -307,6 +337,37 @@ function fmtIST(iso){
   const d=new Date(iso); if(isNaN(d)) return '';
   try{ return d.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true})+' IST'; }
   catch(e){ return d.toLocaleString(); }
+}
+function fmtShort(s){ const d=new Date((s||'')+'T12:00:00'); if(isNaN(d)) return s||''; return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}); }
+
+// Build a simple no-library SVG sparkline from a [{date, score}] history.
+// Line is colour-graded vertically (green high → red low); min/max + date range labelled.
+function sparkline(id, history){
+  if(!history || history.length < 2){
+    return '<div class="spark-empty">📈 30-day trend builds up as data is collected.</div>';
+  }
+  const W=300, H=56, P=4;
+  const ys = history.map(p=>p.score);
+  const n = history.length;
+  let min=Math.min(...ys), max=Math.max(...ys);
+  const span = (max-min) || 1;
+  const px = i => P + (i/(n-1))*(W-2*P);
+  const py = v => P + (1-(v-min)/span)*(H-2*P);
+  const pts = history.map((p,i)=>px(i).toFixed(1)+','+py(p.score).toFixed(1)).join(' ');
+  const gid = 'grad-'+id;
+  const last = history[n-1];
+  let svg = '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'
+    + '<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0%" stop-color="#2ecc71"/><stop offset="50%" stop-color="#f1c40f"/>'
+    + '<stop offset="100%" stop-color="#e74c3c"/></linearGradient></defs>'
+    + '<polyline fill="none" stroke="url(#'+gid+')" stroke-width="2.5" stroke-linejoin="round" '
+    + 'stroke-linecap="round" vector-effect="non-scaling-stroke" points="'+pts+'"/>'
+    + '<circle cx="'+px(n-1).toFixed(1)+'" cy="'+py(last.score).toFixed(1)+'" r="3" fill="'+color(last.score)+'"/>'
+    + '</svg>';
+  return '<div class="spark-row"><span>High '+max+'</span><span>Low '+min+'</span></div>'
+    + svg
+    + '<div class="spark-x"><span>'+fmtShort(history[0].date)+'</span>'
+    + '<span>'+n+'-day trend</span><span>'+fmtShort(last.date)+'</span></div>';
 }
 
 // India component display metadata: emoji, label, value formatter, explanation.
@@ -353,6 +414,7 @@ function render(id, data, kind){
     document.getElementById(id+'-label').textContent='Unavailable';
     document.getElementById(id+'-dir').textContent='';
     document.getElementById(id+'-updated').textContent='';
+    document.getElementById(id+'-spark').innerHTML='';
     document.getElementById(id+'-components').innerHTML='<div class="comp-exp">No data right now — try Refresh.</div>';
     return;
   }
@@ -362,6 +424,7 @@ function render(id, data, kind){
   document.getElementById(id+'-pin').style.left=Math.max(0,Math.min(100,s))+'%';
   document.getElementById(id+'-dir').innerHTML=arrow(data.direction)+' from '+(data.previous_score==null?'–':data.previous_score)+' · '+(data.date||'');
   document.getElementById(id+'-updated').textContent='Last updated: '+fmtIST(data.last_updated);
+  document.getElementById(id+'-spark').innerHTML=sparkline(id, data.history);
   document.getElementById(id+'-components').innerHTML =
     kind==='india' ? renderIndiaComponents(data.components) : renderUsComponents(data.components);
 }
