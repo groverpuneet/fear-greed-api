@@ -28,6 +28,8 @@ import feedparser
 import httpx
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+import gist_store
+
 logger = logging.getLogger("fear_greed.india")
 
 # --------------------------------------------------------------------------- #
@@ -473,12 +475,20 @@ async def compute_india_fear_greed(
             direction = "down"
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    date = now.date().isoformat()
+
+    # Record today's point in the rolling 30-day history and persist it to the
+    # gist when it changed. Persistence degrades to in-memory on any failure.
+    if gist_store.record_point(date, score):
+        await gist_store.save(client)
+
     return {
         "score": score,
         "label": _index_label(score),
         "direction": direction,
         "previous_score": previous_score,
-        "date": now.date().isoformat(),
+        "date": date,
         "last_updated": now.isoformat(),
         "components": components,
+        "history": gist_store.get_history(),
     }

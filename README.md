@@ -121,6 +121,29 @@ This repo ships a `render.yaml` (Infrastructure-as-Code) and a `Procfile`.
    curl https://fear-greed-api-3x70.onrender.com/api/fear-greed
    ```
 
+## India history persistence (optional)
+
+The India index has no public historical source, and this service keeps **no
+database**. By default the 30-day sparkline history is held in memory and resets
+when the instance restarts (Render free tier sleeps/redeploys often).
+
+To make it survive restarts, persist it in a **secret GitHub Gist** (free):
+
+1. Create a GitHub PAT with **only the `gist` scope**:
+   https://github.com/settings/tokens
+2. Create the gist once (prints the id):
+   ```bash
+   GITHUB_GIST_TOKEN=<token> python scripts/create_gist.py
+   ```
+3. Set both variables in Render → **Environment**:
+   - `GITHUB_GIST_TOKEN` — the PAT
+   - `GITHUB_GIST_ID` — the id from step 2
+
+On startup the service loads history from the gist; after each fresh
+computation it appends the day's point and writes it back. If the gist is
+unreachable or the vars are unset, it silently falls back to in-memory. See
+[`.env.example`](.env.example).
+
 ## iPhone widget
 
 A Scriptable home-screen widget for both gauges lives in

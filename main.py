@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
+import gist_store
 from india_fear_greed import compute_india_fear_greed
 from us_fear_greed import fetch_us_fear_greed
 
@@ -55,6 +56,8 @@ async def _startup() -> None:
         timeout=20.0,
         headers={"Accept-Encoding": "gzip, deflate"},
     )
+    # Load any persisted India history (GitHub Gist) into memory before serving.
+    await gist_store.load(_http_client)
     logger.info("Fear & Greed API started")
 
 
@@ -87,30 +90,11 @@ async def _build_payload() -> dict:
         elif us["score"] < prev_us:
             us["direction"] = "down"
 
-    # India has no public historical Fear & Greed source and we keep no database,
-    # so we accumulate a rolling 30-day history in memory (one point per day).
-    # This builds up over time and resets if the instance restarts.
-    if india is not None and india.get("score") is not None:
-        _record_india_history(india.get("date"), india["score"])
-        india["history"] = list(_india_history)
+    # India history (rolling 30-day) is recorded + persisted inside
+    # compute_india_fear_greed via gist_store, and already attached as
+    # india["history"]. Nothing to do here.
 
     return {"india": india, "us": us}
-
-
-# Rolling in-memory daily history for India: [{date, score}], newest last.
-_india_history: list = []
-_INDIA_HISTORY_DAYS = 30
-
-
-def _record_india_history(date: Optional[str], score: int) -> None:
-    """Append today's India score, one entry per calendar date, capped at 30."""
-    if not date:
-        return
-    if _india_history and _india_history[-1].get("date") == date:
-        _india_history[-1]["score"] = score  # same day → keep latest value
-    else:
-        _india_history.append({"date": date, "score": score})
-    del _india_history[:-_INDIA_HISTORY_DAYS]
 
 
 async def _safe_india(prev_score: Optional[int]) -> dict:
@@ -127,6 +111,7 @@ async def _safe_india(prev_score: Optional[int]) -> dict:
             "date": now.date().isoformat(),
             "last_updated": now.isoformat(),
             "components": {},
+            "history": gist_store.get_history(),
             "stale": True,
         }
 
